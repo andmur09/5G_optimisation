@@ -68,7 +68,6 @@ class location(object):
             return self.resources["ram"]
         else:
             raise AttributeError
-
     
 class link(object):
     ## Class representing an edge (link) between two locations in the datacenter
@@ -150,6 +149,13 @@ class topology(object):
     def getLocations(self):
         return self.locations
     
+    def getLocationByDescription(self, description):
+        result = None
+        for location in self.locations:
+            if location.description == description:
+                result = location
+        return result
+    
     def getEdgeByLocations(self, source_id, sink_id):
         # Given two locations it returns the link
         result = None
@@ -169,11 +175,14 @@ class topology(object):
     def getGateway(self):
         return [i for i in self.getLocations() if i.type == "gateway"]
 
-    def outgoingEdge(self, link):
-        return [l for l in self.getLinks() if l.source == link.sink]
+    def outgoingEdge(self, location):
+        return [l for l in self.getLinks() if l.source == location]
     
-    def incomingEdge(self, link):
-        return [l for l in self.getLinks() if l.sink == link.source]
+    def incomingEdge(self, location):
+        return [l for l in self.getLinks() if l.sink == location]
+    
+    def getOpposingEdge(self, link):
+        return [l for l in self.getLinks() if l.source == link.sink and l.sink == link.source] 
 
     def addLink(self, description, source, sink, parameters):
         new_link = link(description, source, sink, parameters)
@@ -242,4 +251,8 @@ class topology(object):
                 print("\tCPU: ", link.sink.cpu)
                 print("\tRAM: ", link.sink.ram)
 
-
+def makeLink(locationA, locationB, parameters):
+    ## If given two locations in the datacenter, A and B, this function makes two links A -> B and B -> A (since data is bidirectional)
+    link1 = link(locationA, locationB, parameters)
+    link2 = link(locationB, locationA, parameters)
+    return [link1, link2]
