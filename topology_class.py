@@ -10,6 +10,7 @@ import subprocess
 import copy
 import logging
 import itertools
+import numpy as np
 inf = 10000
 
 def key_exists(dictionary, keys):
@@ -37,15 +38,16 @@ class location(object):
     def __init__(self, description, type, resources=None):
         self.id = next(location.id_iter)
         self.description = description
-        if type not in ("switch", "gateway", "node"):
-            raise AttributeError("Invalid location type. type must be 'switch', 'gateway' or 'node'.")
+        if type not in ("switch", "gateway", "node", "artificial_source", "artificial_sink"):
+            raise AttributeError("Invalid location type. type must be 'switch', 'gateway', 'node', 'artificial_source' or 'artificial_sink'.")
         if type == "node" and resources == None:
             raise AttributeError("Location of type node must have resources. Define using resources = \{'cpu': float, 'ram': float\}.")
         elif type != "node" and resources != None:
             raise AttributeError("Only location of type node should have resources")
         else:
             self.resources = resources
-        
+        self.type = type
+
     def getName(self):
         return self.id
     
@@ -174,6 +176,12 @@ class topology(object):
 
     def getGateway(self):
         return [i for i in self.getLocations() if i.type == "gateway"]
+    
+    def getArtificialSource(self):
+        return [i for i in self.getLocations() if i.type == "artificial_source"]
+
+    def getArtificialSink(self):
+        return [i for i in self.getLocations() if i.type == "artificial_sink"]
 
     def outgoingEdge(self, location):
         return [l for l in self.getLinks() if l.source == location]
@@ -182,15 +190,22 @@ class topology(object):
         return [l for l in self.getLinks() if l.sink == location]
     
     def getOpposingEdge(self, link):
-        return [l for l in self.getLinks() if l.source == link.sink and l.sink == link.source] 
+        opposing = [l for l in self.getLinks() if l.source == link.sink and l.sink == link.source]
+        if opposing:
+            if len(opposing) == 1:
+                return opposing[0]
+            else:
+                raise ValueError("Edge cannot have more than one opposing edge.")
+        else:
+            return None
 
-    def addLink(self, description, source, sink, parameters):
-        new_link = link(description, source, sink, parameters)
+    def addLink(self, source, sink, parameters):
+        new_link = link(source, sink, parameters)
         self.links.append(new_link)
         print("Link Added")
 
-    def addTimePoint(self, timePoint):
-        self.timePoints.append(timePoint)
+    def addLocation(self, location):
+        self.locations.append(location)
     
     def getLocationByID(self, id):
         for location in self.getLocations():
@@ -250,6 +265,20 @@ class topology(object):
             if link.sink.type == "node":
                 print("\tCPU: ", link.sink.cpu)
                 print("\tRAM: ", link.sink.ram)
+    
+    def addArtificialSource(self, connections):
+        # Adds an artifical source node connected to each node in list 'connections'. If connections contains one location 'A' then it will add a link source->A
+        source = location("Artificial Source", "artificial_source")
+        self.addLocation(source)
+        for i in connections:
+            self.addLink(source, i, {"bandwidth": np.inf, "latency": 0})
+
+    def addArtificialSink(self, connections):
+        # Adds an artifical sink node connected to each node in list 'connections'. If connections contains one location 'B' then it will add a link B -> Sink
+        sink = location("Artificial Sink", "artificial_sink")
+        self.addLocation(sink)
+        for i in connections:
+            self.addLink(i, sink, {"bandwidth": np.inf, "latency": 0})
 
 def makeLink(locationA, locationB, parameters):
     ## If given two locations in the datacenter, A and B, this function makes two links A -> B and B -> A (since data is bidirectional)

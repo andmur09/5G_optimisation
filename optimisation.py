@@ -4,10 +4,12 @@ from gurobipy import GRB
 from math import sqrt, log
 import numpy as np
 from topology_class import location, link, makeLink, topology
+import graphviz as gvz
 
 def minCostFlow(topology, _from, _to):
     m = gp.Model(topology.name + "_mcf")
-    flow = m.addMVar(len(topology.getLinks()),lb = -1, ub=1, vtype=GRB.CONTINUOUS, name="flows")
+    flow = m.addMVar(len(topology.getLinks()), lb = -1, ub=1, vtype=GRB.CONTINUOUS, name="flows")
+    cost = np.ones(len(topology.getLinks()))
     
     # This will be defined in service class after. Placeholder for testing. Latency made arbitrarily high
     throughput = 2
@@ -20,8 +22,8 @@ def minCostFlow(topology, _from, _to):
             linkB = topology.getOpposingEdge(linkA)
             j = topology.links.index(linkB)
             # Adds bandwidth constraints for each link
-            m.addConstr(flow[i] * throughput <= link.bandwidth)
-            m.addConstr(flow[j] * throughput <= link.bandwidth)
+            m.addConstr(flow[i] * throughput <= linkA.bandwidth)
+            m.addConstr(flow[j] * throughput <= linkB.bandwidth)
             # Constrains flow from opposing links to be opposite
             m.addConstr(flow[i] == -flow[j])
             toSkip.append(j)
@@ -35,98 +37,102 @@ def minCostFlow(topology, _from, _to):
             # Adds conservation constraints at all locations in the datacenter except from source and sink nodes
             m.addConstr(gp.quicksum([flow[i] for i in incoming_indexes]) == gp.quicksum([flow[j] for j in outgoing_indexes]))
         elif location == _from:
-            
-
-
-
-        topology.links.index(topology.getOpposingEdge(link))
-        m.addConstr(flow[i] * throughput <= link.bandwidth)
-        pairs.append((i, ))
-
-        link1 = i
-        link2 = topology.getOpposingEdge(topology.links[i])
-
-
-    n = len(vars)
-    m = 2 * len(cc)
-    p = 2 * len(cu)
-    r = len(rvars)
-
-    c = np.zeros(n)
-    A = np.zeros((m, n))
-    b = np.zeros(m)
-    T = np.zeros((p, n))
-    q = np.zeros((p))
-    mu_X = np.zeros((r))
-    cov_X = np.zeros((r, r))
-    psi = np.zeros((p, r))
-
-    # Gets matrices for controllable constraints in form Ax <= b
-    for i in range(len(cc)):
-        ub = 2 * i
-        lb = ub + 1
-        start_i, end_i = vars.index(cc[i].source.id), vars.index(cc[i].sink.id)
-        A[ub, start_i], A[ub, end_i], b[ub] = -1, 1, cc[i].intervals["ub"]
-        A[lb, start_i], A[lb, end_i], b[lb] = 1, -1, -cc[i].intervals["lb"]
-        if cc[i].hard == False:
-            ru_i = vars.index(cc[i].name + "_ru")
-            #rl_i = vars.index(cc[i].name + "_rl")
-            A[ub, ru_i], c[ru_i] = -1, 1
-            #A[lb, rl_i], c[rl_i] = -1, inf
+            outgoing = topology.outgoingEdge(location)
+            outgoing_indexes = [topology.links.index(i) for i in outgoing]
+            # Adds constraint that total throughput leaves source node
+            m.addConstr(gp.quicksum([flow[i] for i in outgoing_indexes]) == 1)
+        elif location == _to:
+            incoming = topology.incomingEdge(location)
+            incoming_indexes = [topology.links.index(i) for i in incoming]
+            # Adds constraint that total throughput leaves source node
+            m.addConstr(gp.quicksum([flow[i] for i in incoming_indexes]) == 1)
     
-    # Gets matrices for joint chance constraint P(Psi omega <= T * vars + q) >= 1 - alpha
-    for i in range(len(cu)):
-        ub = 2 * i
-        lb = ub + 1
-        incoming = PSTN.incomingContingent(cu[i])
-        if incoming["start"] != None:
-            incoming = incoming["start"]
-            start_i, end_i = vars.index(incoming.source.id), vars.index(cu[i].sink.id)
-            T[ub, start_i], T[ub, end_i] = 1, -1
-            T[lb, start_i], T[lb, end_i] = -1, 1
-            q[ub] = cu[i].intervals["ub"]
-            q[lb] = -cu[i].intervals["lb"]
-            if cu[i].hard == False:
-                ru_i = vars.index(cu[i].name + "_ru")
-                #rl_i = vars.index(cu[i].name + "_rl")
-                T[ub, ru_i], c[ru_i] = 1, 1
-                #T[lb, rl_i], c[rl_i] = 1, inf
-            rvar_i = rvars.index("X" + "_" + incoming.source.id + "_" + incoming.sink.id)
-            psi[ub, rvar_i] = -1
-            psi[lb, rvar_i] = 1
-            mu_X[rvar_i] = incoming.mu
-            cov_X[rvar_i][rvar_i] = incoming.sigma**2
-        elif incoming["end"] != None:
-            incoming = incoming["end"]
-            start_i, end_i = vars.index(cu[i].source.id), vars.index(incoming.source.id)
-            T[ub, start_i], T[ub, end_i] = 1, -1
-            T[lb, start_i], T[lb, end_i] = -1, 1
-            q[ub] = cu[i].intervals["ub"]
-            q[lb] = -cu[i].intervals["lb"]
-            if cu[i].hard == False:
-                ru_i = vars.index(cu[i].name + "_ru")
-                #rl_i = vars.index(cu[i].name + "_rl")
-                T[ub, ru_i], c[ru_i] = 1, 1
-                #T[lb, rl_i], c[rl_i] = 1, inf
-            rvar_i = rvars.index("X" + "_" + incoming.source.id + "_" + incoming.sink.id)
-            psi[ub, rvar_i] = 1
-            psi[lb, rvar_i] = -1
-            mu_X[rvar_i] = incoming.mu
-            cov_X[rvar_i][rvar_i] = incoming.sigma**2
-        else:
-            raise AttributeError("Not an uncontrollable constraint since no incoming pstc")
+    m.setObjective(cost @ flow, GRB.MINIMIZE)
+    m.update()
+    m.optimize()
 
-    # Performs transformation of X into eta where eta = psi X such that eta is a p dimensional random variable
-    mu_eta = psi @ mu_X
-    cov_eta = psi @ cov_X @ psi.transpose()
+    if m.status == GRB.OPTIMAL:
+        print('\n objective: ', m.objVal)
+        print('\n Vars:')
+        for i in range(len(m.getVars())):
+            print("Throughput from {} to {}: {}".format(topology.links[i].source.description, topology.links[i].sink.description, str(m.getVars()[i].x*throughput)))
+    return m
 
-    # Translates random vector eta into standard form xi = N(0, R) where R = D.eta.D^T
-    D = np.zeros((p, p))
-    for i in range(p):
-        D[i, i] = 1/sqrt(cov_eta[i, i])
-    R = D @ cov_eta @ D.transpose()
-    T = D @ T
-    q = D @ (q - mu_eta)
-    mu_xi = np.zeros((p))
-    cov_xi = R
-    return A, vars, b, c, T, q, mu_xi, cov_xi
+def minCostFlowWithStops(topology, segments, plot=False):
+    m = gp.Model(topology.name + "_mcfws")
+    n_links = len(topology.getLinks())
+    for i in range(len(topology.getLinks())):
+        print(i, topology.getLinks()[i])
+    n_segments = len(segments)
+    # Makes flow matrix [w12(seg1),...,w1n(seg1),....wn1(seg1),...,wn-1(seg1)]
+    #                   [w12(seg2),...,w1n(seg2),....wn1(seg2),...,wn-1(seg2)]
+    #                                            ...
+    #                   [w12(segm),...,w1n(segm),....wn1(segm),...,wn-1(segm)]
+    flow = m.addMVar((n_segments, n_links), ub=1, vtype=GRB.CONTINUOUS, name="flows")
+    cost = np.ones(n_links)
+    # i = 0
+    # for link in topology.getLinks():
+    #     print(i, link.source.description, " - ", link.sink.description)
+    #     i += 1
+    
+    # This will be defined in service class after. Placeholder for testing. Latency made arbitrarily high
+    throughput = 2
+    latency = 100
+
+    toSkip = []
+    for i in range(n_links):
+        if i not in toSkip:
+            linkA = topology.links[i]
+            linkB = topology.getOpposingEdge(linkA)
+            j = topology.links.index(linkB)
+            # Skips opposing edge since we don't need to add it twice
+            toSkip.append(j)
+            # Adds bandwidth constraints for each link. Since flow is bi-directional need to constrain sum of opposing flows.
+            # Also since we have multiple segments we must sum each.
+            m.addConstr(gp.quicksum([flow[k,i] + flow[k,j] for k in range(n_segments)]) * throughput <= linkA.bandwidth)
+
+    for k in range(n_segments):
+        for location in topology.locations:
+            incoming = topology.incomingEdge(location)
+            outgoing = topology.outgoingEdge(location)
+            incoming_indexes = [topology.links.index(i) for i in incoming]
+            outgoing_indexes = [topology.links.index(i) for i in outgoing]
+            # Adds conservation constraints at all locations in the datacenter.
+            # Conservation is flow_out - flow_in = demand. Demand is how much the node consumes.
+            # For source nodes there is more leaving than coming out in and therefore this is positive.
+            # For sink nodes there is more coming in than leaving and so this is negative.
+            if location.id not in [i.id for i in segments[k]]:
+                m.addConstr(gp.quicksum([flow[k,i] for i in incoming_indexes]) == gp.quicksum([flow[k,j] for j in outgoing_indexes]))
+            elif location.id == segments[k][0].id:
+                # Constrains 100 percent of the flow to pass from the source so demand is 1.
+                m.addConstr(gp.quicksum([flow[k,i] for i in outgoing_indexes]) - gp.quicksum([flow[k,j] for j in incoming_indexes]) == 1)
+            else:
+                # Constraints 100 percent of the flow to pass into the sink
+                m.addConstr(gp.quicksum([flow[k,i] for i in outgoing_indexes]) - gp.quicksum([flow[k,j] for j in incoming_indexes]) == -1)
+    m.setObjective(sum(flow[k] @ cost for k in range(n_segments)), GRB.MINIMIZE)
+    m.update()
+    m.write("trial1.lp")
+    m.write("trial1.mps")
+    m.optimize()
+
+    if m.status == GRB.OPTIMAL:
+        print('\n objective: ', m.objVal)
+        print('\n Vars:')
+        for v in m.getVars():
+            print("Variable {}: ".format(v.varName) + str(v.x))
+    else:
+        m.computeIIS()
+        m.write("trial1.ilp")
+    
+    # If plot is True it plots the graph showing the flows.
+    if plot == True:
+        plot = gvz.Digraph(format='png')
+        for location in topology.getLocations():
+            plot.node(name=str(location.id), label=location.description)
+        for k in range(n_segments):
+            for i in range(len(topology.getLinks())):
+                source_id = topology.getLinks()[i].source.id
+                sink_id = topology.getLinks()[i].sink.id
+                plot.edge(str(source_id), str(sink_id), label="w{}{}{}: {}".format(k, source_id, sink_id, flow[k, i].x), color="/spectral9/"+str(k))
+        plot.render('{}_plot.gv'.format(m.ModelName), view=True)
+    return m
