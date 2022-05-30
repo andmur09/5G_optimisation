@@ -136,3 +136,54 @@ def minCostFlowWithStops(topology, segments, plot=False):
                 plot.edge(str(source_id), str(sink_id), label="w{}{}{}: {}".format(k, source_id, sink_id, flow[k, i].x), color="/spectral9/"+str(k))
         plot.render('{}_plot.gv'.format(m.ModelName), view=True)
     return m
+
+def compact(topology, services, paths):
+    m = gp.Model(topology.name + "_compact")
+    n_paths = len(paths)
+    n_services = len(services)
+    n_links = len(topology.links)
+
+    # Makes variable matrix of path,service pairs.
+    # Represents the fraction of the total throughput of service j, passing through path i
+    #                     [x_p1,s1,...,x_p1,s2,...,x_p1,sS]
+    #                     [x_p2,s1,...,x_p2,s2,...,x_p2,sS]
+    #                                 ...
+    #                     [x_pP,s1,...,x_pP,s2,...,x_pP,sS]
+    xsp = m.addMVar((n_paths, n_services), vtype=GRB.CONTINUOUS, name="xps")
+    # Same as above but multiplied by required service throughput. The total flow contribution of service
+    # j in path i
+    fsp = m.addMVar((n_paths, n_services), vtype=GRB.CONTINUOUS, name="fps")
+    # Makes binary matrix of link,path pairs
+    # 1 if link i is on path j else 0
+    #                     [x_l1,p1,...,x_l1,p2,...,x_l1,pP]
+    #                     [x_l2,p1,...,x_l2,p2,...,x_l2,pP]
+    #                                 ...
+    #                     [x_lL,p1,...,x_lL,p2,...,x_lL,pP]
+    xlp = m.addMVar((n_links, n_paths), vtype=GRB.BINARY, name="xlp")
+
+    # Variable defining total link utilisation cost. This is the sum of the link cost and the amount of traffic
+    # being used by the link across all services and paths
+    luc = m.addMVar(shape=n_links, vtype=GRB.CONTINUOUS, name="link_utilization_cost")
+    
+    for i in range(len(services)):
+        for j in range(len(paths)):
+            for k in range(len(services[i].components)):
+                m.addVar(vtype=GRB.BINARY, name = "y_{}{}{}".format[k,])
+
+    # Multiplies the fractional flow by the total service throughput to get actual throughput of a service j on path i
+    throughputs =[j.throughput for j in services]
+    for i in range(n_paths):
+        for j in range(n_services):
+            m.addConstr(fsp[i,j] == xsp[i,j] * throughputs[j])
+
+    # Ensures that the total service demand is met across all paths:
+    for j in range(n_services):
+        m.addConstr(gp.quicksum([xsp[i,j] for i in range(n_paths)]) >= 1)
+
+    # This constrains the link utilisation cost to be the sum of the service demands used by the link over the lilnk bandwidth multiplied by the link cost 
+    for i in range(n_links):
+        m.addConstr(luc[i] == (topology.links[i].cost * gp.quicksum(xlp @ fsp)[i]) /topology.links[i].bandwidth)
+
+    
+
+    
