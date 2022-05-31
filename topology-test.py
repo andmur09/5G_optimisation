@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
 from unicodedata import bidirectional
+
+from pyparsing import col
 from topology_class import *
 from service_class import *
 from make_service_graph import *
+from optimisation import columnGeneration
 #import optimisation
 
 def main():
@@ -39,9 +42,13 @@ def main():
     layers = problem.getLocationsByTypes()
 
     # Gets service graph using topology
-    graph = make_graph(s, problem)
+    s.addGraph(problem)
+    graph = s.getGraph(problem)
     graph.plot()
     
+    m = columnGeneration(problem, s)
+    for path in graph.paths:
+        print([l.description for l in path.links])
     #problem.print()
 
     # Define source and sink for optimisation

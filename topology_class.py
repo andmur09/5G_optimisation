@@ -43,7 +43,7 @@ class location(object):
         if type not in ("gateway", "super_spine", "spine", "leaf", "node", "dummy"):
             raise AttributeError("Invalid location type. type must be 'gateway', 'super_spine', 'spine', 'leaf', 'node'", "dummy")
         if type == "node" and resources == None:
-            raise AttributeError("Location of type node must have resources. Define using resources = \{'cpu': float, 'ram': float\}.")
+            raise AttributeError("Location of type node must have resources. Define using resources = \{'cpu': float, 'ram': float, 'cost: float\}.")
         elif type != "node" and resources != None:
             raise AttributeError("Only location of type node should have resources")
         else:
@@ -70,6 +70,13 @@ class location(object):
     def ram(self):
         if self.type == "node":
             return self.resources["ram"]
+        else:
+            raise AttributeError
+    
+    @property
+    def cost(self):
+        if self.type == "node":
+            return self.resrouces["cost"]
         else:
             raise AttributeError
     

@@ -1,4 +1,3 @@
-from service_class import *
 from topology_class import *
 
 def make_graph(_service, _topology):
@@ -24,6 +23,10 @@ def make_graph(_service, _topology):
                             new_edge = edge.copy_with_new_nodes(source, sink)
                             new_edge.setLinkCost(1)
                             new_edges.append(new_edge)
+                            if edge.two_way == True:
+                                new_edge = edge.copy_with_new_nodes(sink, source)
+                                new_edge.setLinkCost(1)
+                                new_edges.append(new_edge)
             graph_segments[str(k)] = (new_nodes, new_edges)
 
         elif k == no_components:
@@ -40,6 +43,10 @@ def make_graph(_service, _topology):
                             new_edge = edge.copy_with_new_nodes(source, sink)
                             new_edge.setLinkCost(1)
                             new_edges.append(new_edge)
+                            if edge.two_way == True:
+                                new_edge = edge.copy_with_new_nodes(sink, source)
+                                new_edge.setLinkCost(1)
+                                new_edges.append(new_edge)
             graph_segments[str(k)] = (new_nodes, new_edges)
 
         else:
@@ -71,12 +78,20 @@ def make_graph(_service, _topology):
                             new_edge = edge.copy_with_new_nodes(source, sink)
                             new_edge.setLinkCost(1)
                             new_edges.append(new_edge)
+                            if edge.two_way == True:
+                                new_edge = edge.copy_with_new_nodes(sink, source)
+                                new_edge.setLinkCost(1)
+                                new_edges.append(new_edge)
                 for source in in_nodes:
                     for sink in in_nodes:
                         if edge.source.description == source.description and edge.sink.description == sink.description:
                             new_edge = edge.copy_with_new_nodes(source, sink)
                             new_edge.setLinkCost(1)
                             new_edges.append(new_edge)
+                            if edge.two_way == True:
+                                new_edge = edge.copy_with_new_nodes(sink, source)
+                                new_edge.setLinkCost(1)
+                                new_edges.append(new_edge)
                 # Adds links between out layer and mid
                 for source in out_nodes:
                     for sink in mid_nodes:
@@ -84,6 +99,10 @@ def make_graph(_service, _topology):
                             new_edge = edge.copy_with_new_nodes(source, sink)
                             new_edge.setLinkCost(1)
                             new_edges.append(new_edge)
+                            if edge.two_way == True:
+                                new_edge = edge.copy_with_new_nodes(sink, source)
+                                new_edge.setLinkCost(1)
+                                new_edges.append(new_edge)
                 # # Adds links between mid layer and in
                 for source in mid_nodes:
                     for sink in in_nodes:
@@ -91,6 +110,10 @@ def make_graph(_service, _topology):
                             new_edge = edge.copy_with_new_nodes(source, sink)
                             new_edge.setLinkCost(1)
                             new_edges.append(new_edge)
+                            if edge.two_way == True:
+                                new_edge = edge.copy_with_new_nodes(sink, source)
+                                new_edge.setLinkCost(1)
+                                new_edges.append(new_edge)
             # Adds links between out version of node and in version of same node to prevent having to go up a layer
             for source in out_nodes:
                 for sink in in_nodes:
@@ -134,4 +157,4 @@ def make_graph(_service, _topology):
     for key in graph_segments:
         nodes += graph_segments[key][0]
         edges += graph_segments[key][1]     
-    return service_graph(_service.description + "/" + _topology.name, nodes, edges)
+    return (nodes, edges)

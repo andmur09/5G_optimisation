@@ -3,116 +3,85 @@ import gurobipy as gp
 from gurobipy import GRB
 from math import sqrt, log
 import numpy as np
-from topology_class import location, link, makeLink, topology
+from topology_class import location, link, topology
+from service_class import service, service_graph, service_path
 import graphviz as gvz
 
-def minCostFlow(topology, _from, _to):
-    m = gp.Model(topology.name + "_mcf")
-    flow = m.addMVar(len(topology.getLinks()), lb = -1, ub=1, vtype=GRB.CONTINUOUS, name="flows")
-    cost = np.ones(len(topology.getLinks()))
-    
-    # This will be defined in service class after. Placeholder for testing. Latency made arbitrarily high
-    throughput = 2
-    latency = 100
+def masterProblem(topology, services):
+    m = gp.Model(topology.name)
+    nodes = topology.getLocationsByType("node")
+    n_services = len(services)
+    n_nodes = len(nodes)
 
-    toSkip = []
-    for i in range(len(topology.links)):
-        if i not in toSkip:
-            linkA = topology.links[i]
-            linkB = topology.getOpposingEdge(linkA)
-            j = topology.links.index(linkB)
-            # Adds bandwidth constraints for each link
-            m.addConstr(flow[i] * throughput <= linkA.bandwidth)
-            m.addConstr(flow[j] * throughput <= linkB.bandwidth)
-            # Constrains flow from opposing links to be opposite
-            m.addConstr(flow[i] == -flow[j])
-            toSkip.append(j)
+    components = set()
+    # Adds flow vector for each service where each element represents a path associated with that service
+    # Also makes set of components for all service so that no duplicate components are considered
+    for service in services:
+        graph = service.graphs[topology.name]
+        m.addMVar(shape=len(graph.getPaths()), vtype=GRB.CONTINUOUS, name= service.description + "_flows")
+        for component in service.components:
+            components.add(component)
+    components = list(components)
+
+    # Adds binary variables vector where each elemnt takes a value of 1 if the component is assigned to a particular node or 0 otherwise
+    for component in components:
+        m.addMVar(shape=len(n_nodes), vtype=GRB.BINARY, name=component.description + "_assignment")
+
+    # # Adds constraint that the sum of flows for each service must be greater than the required throughput for the service
+    for service in services:
+        flows = m.getVarByName(service.description + "_flows")
+        m.addConstr(gp.quicksum(flows) >= service.required_throughput)
+
+    # Adds a constraint that says that the sum of all flows through the edge must be less than the bandwidth:
+    for link in topology.links:
+        # updated
+        m.addConstr(gp.quicksum([]) >= service.required_throughput)
+
+    # Adds a constraint that says that a component must be assigned to x different nodes where x is the replica count
+    for component in components:
+        assignments = m.getVarByName(component.description + "_assignment")
+        m.addConstr(gp.quicksum(assignments) == component.replica_count)
+
+    # Adds a constraint that says that the sum of component requirements running on a node must not exceed the capacity.
+
+
+    # Gets number of time a link is traversed for each path
     
-    for location in topology.locations:
-        if location != _from and location != _to:
-            incoming = topology.incomingEdge(location)
-            outgoing = topology.outgoingEdge(location)
-            incoming_indexes = [topology.links.index(i) for i in incoming]
-            outgoing_indexes = [topology.links.index(i) for i in outgoing]
-            # Adds conservation constraints at all locations in the datacenter except from source and sink nodes
-            m.addConstr(gp.quicksum([flow[i] for i in incoming_indexes]) == gp.quicksum([flow[j] for j in outgoing_indexes]))
-        elif location == _from:
-            outgoing = topology.outgoingEdge(location)
-            outgoing_indexes = [topology.links.index(i) for i in outgoing]
-            # Adds constraint that total throughput leaves source node
-            m.addConstr(gp.quicksum([flow[i] for i in outgoing_indexes]) == 1)
-        elif location == _to:
-            incoming = topology.incomingEdge(location)
-            incoming_indexes = [topology.links.index(i) for i in incoming]
-            # Adds constraint that total throughput leaves source node
-            m.addConstr(gp.quicksum([flow[i] for i in incoming_indexes]) == 1)
+
+def columnGeneration(topology, service):
+    m = gp.Model(topology.name + "_" + service.description)
+    graph = service.graphs[topology.name]
+
+    # Adds variables representing whether an edge has been used in a path or not:
+    links = m.addMVar(shape=len(graph.links), vtype=GRB.BINARY, name="links")
+    weights = np.array([l.cost for l in graph.links])
+
+    # Gets indexes of links corresponding to ones leaving the source
+    start = graph.getStartNode()
+    outgoing = graph.outgoingEdge(start)
+    start_indexes = [i for i in range(len(graph.links)) if graph.links[i] in outgoing]
+    # Adds constraint that exactly one link leaving the source must be active
+    m.addConstr(gp.quicksum([links[i] for i in start_indexes]) == 1)
+
+    # Gets indexes of links corresponding to ones entering the sink
+    end = graph.getEndNode()
+    incoming = graph.incomingEdge(end)
+    end_indexes = [i for i in range(len(graph.links)) if graph.links[i] in incoming]
+    # Adds constraint that exactly one link entering the sink must be active
+    m.addConstr(gp.quicksum([links[i] for i in end_indexes]) == 1)
+
+    # Adds constraint that the sum of the flow into and out of every other edge must be conserved
+    source_and_sink = [graph.locations.index(i) for i in [start, end]]
+    for i in range(len(graph.locations)):
+        if i not in source_and_sink:
+            incoming = graph.incomingEdge(graph.locations[i])
+            incoming_i = [i for i in range(len(graph.links)) if graph.links[i] in incoming]
+            outgoing = graph.outgoingEdge(graph.locations[i])
+            outgoing_i = [i for i in range(len(graph.links)) if graph.links[i] in outgoing]
+            m.addConstr(gp.quicksum([links[i] for i in incoming_i]) == gp.quicksum([links[o] for o in outgoing_i]))
     
-    m.setObjective(cost @ flow, GRB.MINIMIZE)
+    m.setObjective(weights @ links, GRB.MINIMIZE)
     m.update()
-    m.optimize()
-
-    if m.status == GRB.OPTIMAL:
-        print('\n objective: ', m.objVal)
-        print('\n Vars:')
-        for i in range(len(m.getVars())):
-            print("Throughput from {} to {}: {}".format(topology.links[i].source.description, topology.links[i].sink.description, str(m.getVars()[i].x*throughput)))
-    return m
-
-def minCostFlowWithStops(topology, segments, plot=False):
-    m = gp.Model(topology.name + "_mcfws")
-    n_links = len(topology.getLinks())
-    for i in range(len(topology.getLinks())):
-        print(i, topology.getLinks()[i])
-    n_segments = len(segments)
-    # Makes flow matrix [w12(seg1),...,w1n(seg1),....wn1(seg1),...,wn-1(seg1)]
-    #                   [w12(seg2),...,w1n(seg2),....wn1(seg2),...,wn-1(seg2)]
-    #                                            ...
-    #                   [w12(segm),...,w1n(segm),....wn1(segm),...,wn-1(segm)]
-    flow = m.addMVar((n_segments, n_links), ub=1, vtype=GRB.CONTINUOUS, name="flows")
-    cost = np.ones(n_links)
-    # i = 0
-    # for link in topology.getLinks():
-    #     print(i, link.source.description, " - ", link.sink.description)
-    #     i += 1
-    
-    # This will be defined in service class after. Placeholder for testing. Latency made arbitrarily high
-    throughput = 2
-    latency = 100
-
-    toSkip = []
-    for i in range(n_links):
-        if i not in toSkip:
-            linkA = topology.links[i]
-            linkB = topology.getOpposingEdge(linkA)
-            j = topology.links.index(linkB)
-            # Skips opposing edge since we don't need to add it twice
-            toSkip.append(j)
-            # Adds bandwidth constraints for each link. Since flow is bi-directional need to constrain sum of opposing flows.
-            # Also since we have multiple segments we must sum each.
-            m.addConstr(gp.quicksum([flow[k,i] + flow[k,j] for k in range(n_segments)]) * throughput <= linkA.bandwidth)
-
-    for k in range(n_segments):
-        for location in topology.locations:
-            incoming = topology.incomingEdge(location)
-            outgoing = topology.outgoingEdge(location)
-            incoming_indexes = [topology.links.index(i) for i in incoming]
-            outgoing_indexes = [topology.links.index(i) for i in outgoing]
-            # Adds conservation constraints at all locations in the datacenter.
-            # Conservation is flow_out - flow_in = demand. Demand is how much the node consumes.
-            # For source nodes there is more leaving than coming out in and therefore this is positive.
-            # For sink nodes there is more coming in than leaving and so this is negative.
-            if location.id not in [i.id for i in segments[k]]:
-                m.addConstr(gp.quicksum([flow[k,i] for i in incoming_indexes]) == gp.quicksum([flow[k,j] for j in outgoing_indexes]))
-            elif location.id == segments[k][0].id:
-                # Constrains 100 percent of the flow to pass from the source so demand is 1.
-                m.addConstr(gp.quicksum([flow[k,i] for i in outgoing_indexes]) - gp.quicksum([flow[k,j] for j in incoming_indexes]) == 1)
-            else:
-                # Constraints 100 percent of the flow to pass into the sink
-                m.addConstr(gp.quicksum([flow[k,i] for i in outgoing_indexes]) - gp.quicksum([flow[k,j] for j in incoming_indexes]) == -1)
-    m.setObjective(sum(flow[k] @ cost for k in range(n_segments)), GRB.MINIMIZE)
-    m.update()
-    m.write("trial1.lp")
-    m.write("trial1.mps")
     m.optimize()
 
     if m.status == GRB.OPTIMAL:
@@ -122,67 +91,54 @@ def minCostFlowWithStops(topology, segments, plot=False):
             print("Variable {}: ".format(v.varName) + str(v.x))
     else:
         m.computeIIS()
-        m.write("trial1.ilp")
+        m.write("{}.ilp".format(m.ModelName))
+        m.write("{}.lp".format(m.ModelName))
+        m.write("{}.mps".format(m.ModelName))
+
+    # From solution gets set of links
+    links_i = [i for i in range(len(graph.links)) if links[i].x == 1]
+    used_links = [graph.links[i] for i in range(len(graph.links)) if i in links_i]
     
-    # If plot is True it plots the graph showing the flows.
-    if plot == True:
-        plot = gvz.Digraph(format='png')
-        for location in topology.getLocations():
-            plot.node(name=str(location.id), label=location.description)
-        for k in range(n_segments):
-            for i in range(len(topology.getLinks())):
-                source_id = topology.getLinks()[i].source.id
-                sink_id = topology.getLinks()[i].sink.id
-                plot.edge(str(source_id), str(sink_id), label="w{}{}{}: {}".format(k, source_id, sink_id, flow[k, i].x), color="/spectral9/"+str(k))
-        plot.render('{}_plot.gv'.format(m.ModelName), view=True)
+    # From links gets set of nodes and adds path
+    used_nodes = set()
+    for link in used_links:
+        if link.source not in used_nodes:
+            used_nodes.add(link.source)
+        if link.sink not in used_nodes:
+            used_nodes.add(link.sink)
+    used_nodes = list(used_nodes)
+
+    # Counts each time an edge in the original topology has been traversed by the path
+    times_traversed = []
+    for link1 in topology.links:
+        z = 0
+        for link2 in used_links:
+            if link1.source.description == link2.source.description and link1.sink.description == link2.sink.description:
+                z += 1   
+            elif link1.sink.description == link2.source.description and link1.source.description == link2.sink.description:
+                z += 1
+        times_traversed.append((link1, z))
+    
+    # Makes binary vector representing assignment of component to node for the path:
+    component_assignment = []
+    for component in service.components:
+        for node in topology.getLocationsByType("node"):
+            if node.description + "_" + component.description in [i.description for i in used_nodes]: 
+                component_assignment.append((component, node, 1))
+            else:
+                component_assignment.append((component, node, 0))
+
+    path = service_path(topology.name + "_" + service.description, used_nodes, used_links, times_traversed, component_assignment)
+    graph.addPath(path)
     return m
 
-def compact(topology, services, paths):
-    m = gp.Model(topology.name + "_compact")
-    n_paths = len(paths)
-    n_services = len(services)
-    n_links = len(topology.links)
 
-    # Makes variable matrix of path,service pairs.
-    # Represents the fraction of the total throughput of service j, passing through path i
-    #                     [x_p1,s1,...,x_p1,s2,...,x_p1,sS]
-    #                     [x_p2,s1,...,x_p2,s2,...,x_p2,sS]
-    #                                 ...
-    #                     [x_pP,s1,...,x_pP,s2,...,x_pP,sS]
-    xsp = m.addMVar((n_paths, n_services), vtype=GRB.CONTINUOUS, name="xps")
-    # Same as above but multiplied by required service throughput. The total flow contribution of service
-    # j in path i
-    fsp = m.addMVar((n_paths, n_services), vtype=GRB.CONTINUOUS, name="fps")
-    # Makes binary matrix of link,path pairs
-    # 1 if link i is on path j else 0
-    #                     [x_l1,p1,...,x_l1,p2,...,x_l1,pP]
-    #                     [x_l2,p1,...,x_l2,p2,...,x_l2,pP]
-    #                                 ...
-    #                     [x_lL,p1,...,x_lL,p2,...,x_lL,pP]
-    xlp = m.addMVar((n_links, n_paths), vtype=GRB.BINARY, name="xlp")
 
-    # Variable defining total link utilisation cost. This is the sum of the link cost and the amount of traffic
-    # being used by the link across all services and paths
-    luc = m.addMVar(shape=n_links, vtype=GRB.CONTINUOUS, name="link_utilization_cost")
     
-    for i in range(len(services)):
-        for j in range(len(paths)):
-            for k in range(len(services[i].components)):
-                m.addVar(vtype=GRB.BINARY, name = "y_{}{}{}".format[k,])
 
-    # Multiplies the fractional flow by the total service throughput to get actual throughput of a service j on path i
-    throughputs =[j.throughput for j in services]
-    for i in range(n_paths):
-        for j in range(n_services):
-            m.addConstr(fsp[i,j] == xsp[i,j] * throughputs[j])
 
-    # Ensures that the total service demand is met across all paths:
-    for j in range(n_services):
-        m.addConstr(gp.quicksum([xsp[i,j] for i in range(n_paths)]) >= 1)
 
-    # This constrains the link utilisation cost to be the sum of the service demands used by the link over the lilnk bandwidth multiplied by the link cost 
-    for i in range(n_links):
-        m.addConstr(luc[i] == (topology.links[i].cost * gp.quicksum(xlp @ fsp)[i]) /topology.links[i].bandwidth)
+
 
     
 
