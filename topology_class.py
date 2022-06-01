@@ -37,9 +37,10 @@ class location(object):
         # \description      String descpription of location
         # \type             One of "gateway", "super_spine", "spine", "leaf", "node" or "dummy"
         # \resources        If node, dictionary containing resources: {"cpu": float, "ram": float}
-    def __init__(self, description, type, resources=None):
+    def __init__(self, description, type, resources=None, cost=None):
         self.id = next(location.id_iter)
         self.description = description
+        self.cost = cost
         if type not in ("gateway", "super_spine", "spine", "leaf", "node", "dummy"):
             raise AttributeError("Invalid location type. type must be 'gateway', 'super_spine', 'spine', 'leaf', 'node'", "dummy")
         if type == "node" and resources == None:
@@ -73,12 +74,6 @@ class location(object):
         else:
             raise AttributeError
     
-    @property
-    def cost(self):
-        if self.type == "node":
-            return self.resrouces["cost"]
-        else:
-            raise AttributeError
     
 class link(object):
     ## Class representing an edge (link) between two locations in the datacenter

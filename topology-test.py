@@ -5,7 +5,7 @@ from pyparsing import col
 from topology_class import *
 from service_class import *
 from make_service_graph import *
-from optimisation import columnGeneration
+from optimisation import columnGeneration, masterProblem
 #import optimisation
 
 def main():
@@ -15,8 +15,8 @@ def main():
     locations.append(location("Spine1", "spine"))
     locations.append(location("Leaf1", "leaf"))
     locations.append(location("Leaf2", "leaf"))
-    locations.append(location("Node1", "node", resources={"cpu": float(4), "ram": float(8)}))
-    locations.append(location("Node2", "node", resources={"cpu": float(2), "ram": float(16)}))
+    locations.append(location("Node1", "node", resources={"cpu": float(4), "ram": float(8)}, cost=2))
+    locations.append(location("Node2", "node", resources={"cpu": float(2), "ram": float(16)}, cost=1))
 
     # Makes the links between locations in the datacenter
     links = []
@@ -39,7 +39,7 @@ def main():
     c1 = component("component1", {"cpu": 1, "ram": 2}, 2)
     c2 = component("component2", {"cpu": 1, "ram": 2}, 2)
     s = service("service_test", [c1, c2], 1, 10)
-    layers = problem.getLocationsByTypes()
+    #layers = problem.getLocationsByTypes()
 
     # Gets service graph using topology
     s.addGraph(problem)
@@ -47,9 +47,9 @@ def main():
     graph.plot()
     
     m = columnGeneration(problem, s)
-    for path in graph.paths:
-        print([l.description for l in path.links])
+
     #problem.print()
+    masterProblem(problem, [s])
 
     # Define source and sink for optimisation
     # _from = problem.getLocationByDescription("Gateway")
